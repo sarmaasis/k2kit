@@ -64,7 +64,7 @@ pnpm test
 
 ## Releases
 
-Maintainers release by bumping `version` in `package.json` and `src/version.ts`, updating `CHANGELOG.md`, and pushing a `vX.Y.Z` tag. The release workflow publishes to npm with provenance.
+Maintainers release by bumping `version` in `package.json` and `src/version.ts`, updating `CHANGELOG.md`, and pushing a `vX.Y.Z` tag. The release workflow runs in the `npm` GitHub environment, which only accepts `v*` tags and waits for a maintainer's approval, then publishes through npm trusted publishing (no npm token) with a provenance attestation, and creates the GitHub release.
 
 ## Conduct and security
 

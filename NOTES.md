@@ -52,6 +52,8 @@ Also verified on 2026-10-11: the built package passes `publint --strict` and `@a
 
 - **Dependabot and pnpm 12.** Dependabot may not parse pnpm 12's lockfile yet. If its npm updates fail, switch to Renovate, which tracks pnpm releases closely; the GitHub Actions updates are unaffected.
 
+- **Releases.** 0.1.0 was published from CI with a granular npm token; npm staged it for approval, and it shipped without a provenance attestation. From the next release on, `release.yml` uses npm trusted publishing (OIDC) through the `npm` GitHub environment, with `--provenance`, and no npm token exists. The package requires 2FA and disallows bypass tokens for any other publish.
+
 ## Known limits
 
 - The FNV-1a fallback key (no `k2kit-id` header) collides for identical content received in the same millisecond, and doesn't catch producer retries.
