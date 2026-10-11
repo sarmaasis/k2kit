@@ -500,7 +500,7 @@ describe("cli edge cases", () => {
   });
 });
 
-describe("cli edge cases, round two", () => {
+describe("cli: I/O, signals and input handling", () => {
   it("3. a token with a trailing newline is a usage error, not endless retries", async () => {
     const t = cli();
     t.io.env.CLOUDFLARE_API_TOKEN = `${t.fake.token}\n`;
@@ -673,7 +673,7 @@ describe("cli edge cases, round two", () => {
   });
 });
 
-describe("cli edge cases, round three", () => {
+describe("cli: temporary subscriptions and subs rm", () => {
   it.each(["tail", "replay"])(
     "%s: Ctrl+C while the temporary subscription is being created doesn't leak it",
     async (command) => {

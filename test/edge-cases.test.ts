@@ -1,4 +1,5 @@
-// Regression tests for edge cases found in review; numbers match the list in NOTES.md.
+// Regression tests: dedupe keys, Node buffers, worker ids, lease timing, backoff limits,
+// Redis Cluster keys and streaming produce.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_TIMER_MS, sleep } from "../src/backoff.js";
 import { K2Client } from "../src/client.js";

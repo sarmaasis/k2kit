@@ -1,4 +1,5 @@
-// Regression tests for the second round of edge cases; numbers match NOTES.md.
+// Regression tests: request timeouts, dead-letter header limits, client validation, logger
+// failures, heartbeat timing, consumer lifecycle and malformed ids.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sleep } from "../src/backoff.js";
 import { K2Client, K2TimeoutError } from "../src/client.js";
@@ -288,7 +289,7 @@ describe("13. very long k2kit-id values", () => {
   });
 });
 
-describe("round three: consumer lifecycle and bad ids", () => {
+describe("consumer lifecycle and bad ids", () => {
   it("run() after an early stop() (e.g. SIGTERM during startup) resolves without starting", async () => {
     const { fake, consumer } = setup();
     const c = consumer();

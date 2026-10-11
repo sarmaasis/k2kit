@@ -1,5 +1,5 @@
-// Regression tests for the fourth round: user-supplied code that never answers, and K2's real
-// record size limit (content + headers + overhead, measured on real K2).
+// Regression tests: user-supplied code that never answers, K2's documented and measured limits,
+// dedupe ids, produce input validation, dead-letter headers and runaway request loops.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   K2Client,
