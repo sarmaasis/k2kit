@@ -16,11 +16,16 @@ export interface RedisDedupeClient {
 export interface RedisDedupeStoreOptions {
   client: RedisDedupeClient;
   /**
-   * Separates consumers that must not dedupe each other, usually the subscription name.
-   * Two subscriptions both process every record, so they need different namespaces.
+   * Separates consumers that must not dedupe each other. Use the **subscription id**: two
+   * subscriptions both process every record, so they need different namespaces, and a
+   * subscription deleted and recreated under the same name (to reprocess a stream) gets a new
+   * id, so old keys can't make it skip records.
    */
   namespace: string;
-  /** How long a key is remembered. Default 7 days (K2's default retention). */
+  /**
+   * How long a key is remembered. Default 7 days (K2's default retention). Use at least the
+   * stream's retention: after a long outage, a redelivery can arrive later than a shorter TTL.
+   */
   ttlSeconds?: number;
   /** Key prefix. Default `"k2kit:dedupe:"`. */
   prefix?: string;
@@ -29,6 +34,10 @@ export interface RedisDedupeStoreOptions {
 /**
  * {@link DedupeStore} backed by Redis, shared by every process consuming a subscription.
  * A batch costs one `MGET` and one pipelined write.
+ *
+ * Keys look like `k2kit:dedupe:{<namespace>}:<record key>`. The braces are a Redis Cluster hash
+ * tag: every key of a namespace lands on the same shard, so the multi-key `MGET` works in
+ * cluster mode too.
  */
 export class RedisDedupeStore implements DedupeStore {
   readonly #client: RedisDedupeClient;
@@ -44,7 +53,7 @@ export class RedisDedupeStore implements DedupeStore {
     if (!Number.isInteger(ttl) || ttl < 1)
       throw new TypeError("ttlSeconds must be a positive integer");
     this.#client = opts.client;
-    this.#keyPrefix = `${opts.prefix ?? "k2kit:dedupe:"}${opts.namespace}:`;
+    this.#keyPrefix = `${opts.prefix ?? "k2kit:dedupe:"}{${opts.namespace}}:`;
     this.#ttlSeconds = ttl;
   }
 

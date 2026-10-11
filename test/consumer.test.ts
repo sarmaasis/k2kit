@@ -334,7 +334,7 @@ describe("Consumer", () => {
 
   it("dedupe skips a redelivered record after a failed ack", async () => {
     const h = harness();
-    h.fake.append("once");
+    h.fake.appendWithId("once");
     h.fake.fail("ack", 10213); // non-retryable: the ack is given up, lease expires, K2 redelivers
     let handled = 0;
     const c = h.consumer({ dedupe: new MemoryDedupeStore() });
@@ -672,7 +672,7 @@ describe("Consumer", () => {
 
   it("uses hasMany/addMany when the dedupe store has them", async () => {
     const h = harness();
-    h.fake.append("a", "b");
+    h.fake.appendWithId("a", "b");
     const store = {
       has: vi.fn(async () => false),
       add: vi.fn(async () => {}),
@@ -710,7 +710,7 @@ describe("Consumer", () => {
 
     it("checks before the handler and writes keys after it succeeds, before the ack", async () => {
       const h = harness();
-      h.fake.append("a", "b");
+      h.fake.appendWithId("a", "b");
       const { store, events } = trackingStore();
       const fetch: typeof globalThis.fetch = (input, init) => {
         if (String(input).endsWith("/ack")) events.push("ack");
@@ -725,7 +725,7 @@ describe("Consumer", () => {
 
     it("writes no keys when the handler throws, so the records are processed again", async () => {
       const h = harness();
-      h.fake.append("a");
+      h.fake.appendWithId("a");
       const { store, events, seen } = trackingStore();
       let calls = 0;
       const c = h.consumer({ dedupe: store, onError: () => {} });
@@ -746,7 +746,7 @@ describe("Consumer", () => {
 
     it("acks without calling the handler when every record was already seen", async () => {
       const h = harness();
-      h.fake.append("a");
+      h.fake.appendWithId("a");
       const { store, seen } = trackingStore();
       const raw = h.fake.records[0];
       if (!raw) throw new Error("no record");
@@ -761,7 +761,7 @@ describe("Consumer", () => {
 
     it("processes without dedupe when the store is down, instead of dropping", async () => {
       const h = harness();
-      h.fake.append("a");
+      h.fake.appendWithId("a");
       const phases: string[] = [];
       const store = {
         has: async () => false,

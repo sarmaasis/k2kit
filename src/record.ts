@@ -2,6 +2,8 @@ import type { K2Record, RawRecord } from "./types.js";
 
 /** Header that {@link K2Client.produce} adds so consumers can dedupe producer retries. */
 export const ID_HEADER = "k2kit-id";
+/** Ids longer than this are hashed into the dedupe key, so keys (e.g. in Redis) stay small. */
+const MAX_RAW_ID_LENGTH = 128;
 
 const encoder = new TextEncoder();
 const strictDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -38,7 +40,11 @@ export const fromBase64: (base64: string) => Uint8Array = native.fromBase64
   : NodeBuffer
     ? (text) => {
         const buf = NodeBuffer.from(text, "base64");
-        return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+        // Small results live in Node's shared 8 KB pool. A view would expose unrelated memory
+        // through `.buffer`, so copy those; large results own their memory and are returned as is.
+        return buf.byteOffset === 0 && buf.buffer.byteLength === buf.byteLength
+          ? new Uint8Array(buf.buffer, 0, buf.byteLength)
+          : new Uint8Array(buf);
       }
     : fromBase64Portable;
 
@@ -77,12 +83,29 @@ export function utf8DecodeStrict(bytes: Uint8Array): string | null {
 }
 
 /**
- * Turns produce input into bytes: `Uint8Array` as is, strings as UTF-8, anything else as JSON.
+ * Turns produce input into bytes: `Uint8Array` as is, strings as UTF-8, other binary data
+ * (`ArrayBuffer`, `DataView`, typed arrays) as its bytes, anything else as JSON. Throws
+ * `TypeError` for values with no JSON form (`undefined`, functions), which would otherwise
+ * silently become empty records.
  */
 export function contentToBytes(content: Uint8Array | string | object): Uint8Array {
   if (content instanceof Uint8Array) return content;
   if (typeof content === "string") return utf8Encode(content);
-  return utf8Encode(JSON.stringify(content));
+  // Like a fetch body: JSON.stringify would turn these into "{}" or an object of indices.
+  if (ArrayBuffer.isView(content)) {
+    return new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
+  }
+  if (
+    content instanceof ArrayBuffer ||
+    (typeof SharedArrayBuffer !== "undefined" && content instanceof SharedArrayBuffer)
+  ) {
+    return new Uint8Array(content);
+  }
+  const json = JSON.stringify(content) as string | undefined;
+  if (json === undefined) {
+    throw new TypeError(`content must be bytes, a string or a JSON value, not ${typeof content}`);
+  }
+  return utf8Encode(json);
 }
 
 /**
@@ -117,12 +140,16 @@ class Record implements K2Record {
   readonly timestampMs: number;
   readonly headers: Readonly<{ [name: string]: string }>;
   readonly bytes: Uint8Array;
+  readonly id: string | undefined;
   #key: string | undefined;
 
   constructor(raw: RawRecord) {
     this.timestampMs = raw.timestamp_ms;
     this.headers = raw.headers ?? {};
     this.bytes = fromBase64(raw.content);
+    // A blank id would make every such record share one key, so it counts as missing.
+    const id = this.headers[ID_HEADER];
+    this.id = id === undefined || id.trim() === "" ? undefined : id;
   }
 
   text(): string {
@@ -135,8 +162,12 @@ class Record implements K2Record {
 
   key(): string {
     if (this.#key === undefined) {
-      const id = this.headers[ID_HEADER];
-      this.#key = id ?? fnv1a64(utf8Encode(`${this.timestampMs}:`), this.bytes);
+      const id = this.id;
+      if (id === undefined) {
+        this.#key = fnv1a64(utf8Encode(`${this.timestampMs}:`), this.bytes);
+      } else {
+        this.#key = id.length > MAX_RAW_ID_LENGTH ? `id-fnv:${fnv1a64(utf8Encode(id))}` : id;
+      }
     }
     return this.#key;
   }

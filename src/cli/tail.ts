@@ -1,11 +1,6 @@
 import { Consumer } from "../consumer.js";
-import {
-  type CliContext,
-  checkSubscriptionCapacity,
-  deleteTemporary,
-  stderrLogger,
-} from "./context.js";
-import { formatRecord, matchesFilter, type RecordFilter, randomSuffix } from "./format.js";
+import { type CliContext, stderrLogger, withTemporarySubscription } from "./context.js";
+import { formatRecord, matchesFilter, type RecordFilter } from "./format.js";
 
 export interface TailOptions {
   json: boolean;
@@ -20,13 +15,8 @@ export interface TailOptions {
  */
 export async function tail(ctx: CliContext, opts: TailOptions): Promise<void> {
   const { io } = ctx;
-  await checkSubscriptionCapacity(ctx);
-  const name = `k2kit-tail-${randomSuffix()}`;
-  const id = await ctx.client.ensureSubscription(name, "latest");
-  io.stderr(`tailing via temporary subscription ${name}; press Ctrl+C to stop\n`);
-
-  let unregister = () => {};
-  try {
+  await withTemporarySubscription(ctx, "tail", "latest", async ({ id, name }, stop) => {
+    io.stderr(`tailing via temporary subscription ${name}; press Ctrl+C to stop\n`);
     const consumer = new Consumer({
       streamId: ctx.streamId,
       token: ctx.token,
@@ -37,22 +27,17 @@ export async function tail(ctx: CliContext, opts: TailOptions): Promise<void> {
       ...(ctx.endpoint ? { endpoint: ctx.endpoint } : {}),
       ...(io.fetch ? { fetch: io.fetch } : {}),
     });
-    unregister = io.onSignal(() => {
-      void consumer.stop({ timeoutMs: 5_000 });
-    });
+    stop.addEventListener("abort", () => void consumer.stop({ timeoutMs: 5_000 }), { once: true });
 
     let printed = 0;
-    await consumer.run((batch) => {
+    await consumer.run(async (batch) => {
       for (const record of batch.records) {
         if (opts.limit !== undefined && printed >= opts.limit) break;
         if (!matchesFilter(record, opts.filter)) continue;
-        io.stdout(`${formatRecord(record, opts)}\n`);
+        await io.stdout(`${formatRecord(record, opts)}\n`);
         printed++;
       }
       if (opts.limit !== undefined && printed >= opts.limit) void consumer.stop();
     });
-  } finally {
-    unregister();
-    await deleteTemporary(ctx, id, name);
-  }
+  });
 }

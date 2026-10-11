@@ -16,7 +16,7 @@ Usage:
                [--limit N] [--json] [--headers]
   k2kit subs ls [--json]
   k2kit subs rm <id|name>
-  k2kit subs rm --prefix <p> [--yes]
+  k2kit subs rm --prefix <p> [--older-than <dur>] [--yes]
   k2kit produce [--header k=v ...] [--raw] [--gzip]
 
 Global flags:
@@ -26,7 +26,8 @@ Global flags:
   --version        Show the version
 
 For tail and replay, --grep matches the record's text and every --header k=v must match.
-Durations: 30m, 2h, 7d (relative to now); anything else is parsed as an ISO date.
+Durations: 30m, 2h, 7d (relative to now); otherwise an ISO date. Date-times need a
+timezone (2026-10-11T10:00Z or +05:30); a date alone means midnight UTC.
 Records go to stdout; logs and warnings go to stderr.
 Exit codes: 0 ok, 1 runtime or K2 error, 2 usage error.
 `;
@@ -44,6 +45,7 @@ const OPTIONS = {
   until: { type: "string" },
   grep: { type: "string" },
   prefix: { type: "string" },
+  "older-than": { type: "string" },
   yes: { type: "boolean", short: "y" },
   header: { type: "string", multiple: true },
   raw: { type: "boolean" },
@@ -56,7 +58,7 @@ const ALLOWED: { [command: string]: OptionName[] } = {
   tail: ["grep", "header", "json", "headers", "limit"],
   replay: ["since", "until", "grep", "header", "limit", "json", "headers"],
   "subs ls": ["json"],
-  "subs rm": ["prefix", "yes"],
+  "subs rm": ["prefix", "older-than", "yes"],
   produce: ["header", "raw", "gzip"],
 };
 
@@ -99,6 +101,9 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
     const now = io.now();
     const since = values.since === undefined ? undefined : parseTime(values.since, now, "--since");
     const until = values.until === undefined ? undefined : parseTime(values.until, now, "--until");
+    if (since !== undefined && until !== undefined && since >= until) {
+      throw new UsageError("--since must be earlier than --until");
+    }
     const ctx = createContext(io, values);
     const json = values.json ?? false;
     const headers = values.headers ?? false;
@@ -118,6 +123,10 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
         await subsRemove(ctx, {
           target: extra[0],
           prefix: values.prefix,
+          olderThan:
+            values["older-than"] === undefined
+              ? undefined
+              : parseTime(values["older-than"], now, "--older-than"),
           yes: values.yes ?? false,
         });
         break;

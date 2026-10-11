@@ -49,7 +49,10 @@ interface Sub {
   leases: Map<string, Lease>;
 }
 
-type Fault = { kind: "code"; code: number; message?: string } | { kind: "network" };
+type Fault =
+  | { kind: "code"; code: number; message?: string }
+  | { kind: "network" }
+  | { kind: "hang" };
 
 const STATUS: { [code: number]: number } = {
   10200: 404,
@@ -112,7 +115,6 @@ export class FakeK2 {
   readonly #publicProduce: boolean;
   readonly #subs = new Map<string, Sub>();
   readonly #faults = new Map<Endpoint, Fault[]>();
-  #seq = 0;
 
   constructor(opts: FakeK2Options = {}) {
     this.token = opts.token ?? "test-token";
@@ -149,6 +151,14 @@ export class FakeK2 {
 
     const fault = this.#faults.get(endpoint)?.shift();
     if (fault?.kind === "network") throw new TypeError("fetch failed");
+    if (fault?.kind === "hang") {
+      // A connection that never answers; only the caller's abort signal ends it.
+      return new Promise<Response>((_, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }
     if (fault?.kind === "code")
       return this.#fail(endpoint, fault.code, fault.message ?? "injected");
 
@@ -179,6 +189,13 @@ export class FakeK2 {
     this.#faults.set(endpoint, queue);
   }
 
+  /** Makes the next `times` calls to `endpoint` never respond (until aborted). */
+  hang(endpoint: Endpoint, times = 1): void {
+    const queue = this.#faults.get(endpoint) ?? [];
+    for (let i = 0; i < times; i++) queue.push({ kind: "hang" });
+    this.#faults.set(endpoint, queue);
+  }
+
   /** Makes the next `times` calls to `endpoint` throw a network error. */
   failNetwork(endpoint: Endpoint, times = 1): void {
     const queue = this.#faults.get(endpoint) ?? [];
@@ -187,6 +204,18 @@ export class FakeK2 {
   }
 
   /** Appends records directly, bypassing HTTP. Content is any JSON value unless `raw`. */
+  /** Appends records with a random `k2kit-id` header, as k2kit's producers send them. */
+  appendWithId(...contents: unknown[]): void {
+    for (const c of contents) {
+      const bytes = new TextEncoder().encode(typeof c === "string" ? c : JSON.stringify(c));
+      this.records.push({
+        timestamp_ms: this.#now(),
+        content: btoa(String.fromCharCode(...bytes)),
+        headers: { "k2kit-id": crypto.randomUUID() },
+      });
+    }
+  }
+
   append(...contents: unknown[]): void {
     for (const c of contents) {
       const bytes = new TextEncoder().encode(typeof c === "string" ? c : JSON.stringify(c));
@@ -269,25 +298,31 @@ export class FakeK2 {
         return this.#createSub(body);
       case "listSubscriptions": {
         const name = url.searchParams.get("name");
+        // Real K2 rejects a name filter that isn't a valid subscription name (verified 2026-10-12).
+        if (name !== null && !SUB_NAME.test(name))
+          throw new HttpError(10204, "Request body is invalid");
         const subs = [...this.#subs.values()].filter(
           (s) => name === null || s.name.toLowerCase() === name.toLowerCase(),
         );
         return subs.map(view);
       }
+      // Real K2 checks id formats first (verified 2026-10-11): a malformed subscription id is
+      // 10204 for GET/DELETE but 10215 for consume; a malformed batch id is 10204.
       case "getSubscription":
-        return view(this.#sub(params[0]));
-      case "deleteSubscription":
-        this.#sub(params[0]);
-        this.#subs.delete(params[0] ?? "");
-        return null;
+        return view(this.#sub(wellFormed(params[0])));
+      case "deleteSubscription": {
+        const sub = this.#sub(wellFormed(params[0]));
+        this.#subs.delete(sub.id);
+        return { id: sub.id };
+      }
       case "consume":
         return this.#consume(this.#sub(params[0]), body);
       case "ack":
-        return this.#ack(this.#sub(params[0]), params[1] ?? "", body);
+        return this.#ack(this.#sub(params[0]), wellFormed(params[1]), body);
       case "nack":
-        return this.#nack(this.#sub(params[0]), params[1] ?? "", body);
+        return this.#nack(this.#sub(params[0]), wellFormed(params[1]), body);
       case "extend":
-        return this.#extend(this.#sub(params[0]), params[1] ?? "", body);
+        return this.#extend(this.#sub(params[0]), wellFormed(params[1]), body);
       default:
         throw new HttpError(10204, "unsupported");
     }
@@ -313,7 +348,7 @@ export class FakeK2 {
     if (this.#subs.size >= MAX_SUBSCRIPTIONS) {
       throw new HttpError(10219, "stream already has 100 subscriptions");
     }
-    const id = `sub_${++this.#seq}`;
+    const id = newId();
     this.#subs.set(id, {
       id,
       name: body.name,
@@ -381,7 +416,7 @@ export class FakeK2 {
     if (indices.length === 0) return { batch_id: null, leased_until_ms: null, records: [] };
 
     const lease: Lease = {
-      batchId: `batch_${++this.#seq}`,
+      batchId: newId(),
       workerId,
       indices,
       leasedUntilMs: now + LEASE_MS,
@@ -455,14 +490,40 @@ export class FakeK2 {
       if (typeof r.content !== "string" || !STD_BASE64.test(r.content)) {
         throw new HttpError(10204, "content must be standard base64");
       }
-      if (Math.floor((r.content.length * 3) / 4) > MAX_RECORD_BYTES) {
-        throw new HttpError(10207, "record exceeds 1 MB");
+      // Real K2 counts content + header names/values + ~14 bytes + ~2–4 bytes per header toward
+      // its 1,000,000-byte record limit (measured 2026-10-11); this uses the low end of that.
+      const contentBytes =
+        Math.floor((r.content.length * 3) / 4) - (r.content.match(/=*$/)?.[0].length ?? 0);
+      let recordBytes = contentBytes + 14;
+      if (isObject(r.headers)) {
+        for (const [name, value] of Object.entries(r.headers)) {
+          recordBytes +=
+            new TextEncoder().encode(name).byteLength +
+            new TextEncoder().encode(String(value)).byteLength +
+            2;
+        }
+      }
+      if (recordBytes > MAX_RECORD_BYTES) {
+        throw new HttpError(10207, "Individual record must not exceed 1 MB");
       }
       if (r.headers !== undefined) {
         if (!isObject(r.headers) || Object.values(r.headers).some((v) => typeof v !== "string")) {
           throw new HttpError(10204, "headers must map string to string");
         }
         if (Object.keys(r.headers).length > 32) throw new HttpError(10204, "too many headers");
+        let total = 0;
+        for (const [name, value] of Object.entries(r.headers) as [string, string][]) {
+          const n = new TextEncoder().encode(name).byteLength;
+          const v = new TextEncoder().encode(value).byteLength;
+          if (n > 256 || v > 8_192) throw new HttpError(10204, "header name or value too large");
+          total += n + v;
+        }
+        if (total > 65_536) {
+          throw new HttpError(
+            10204,
+            "Combined header names and values must not exceed 65536 UTF-8 bytes per record",
+          );
+        }
       }
       accepted.push({
         timestamp_ms: this.#now(),
@@ -497,6 +558,20 @@ export class FakeK2 {
       messages: [],
     });
   }
+}
+
+/** K2 ids are 32 lowercase hex characters. */
+const ID_FORMAT = /^[0-9a-f]{32}$/;
+
+function newId(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+/** Throws K2's 10204 for an id that isn't in K2's format. */
+function wellFormed(id: string | undefined): string {
+  if (id === undefined || !ID_FORMAT.test(id))
+    throw new HttpError(10204, "Request body is invalid");
+  return id;
 }
 
 function view(s: Sub) {

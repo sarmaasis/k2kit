@@ -109,6 +109,20 @@ describe("K2Client", () => {
     expect((await caught(client.getSubscription(id1))).code).toBe(10215);
   });
 
+  it("matches real K2 on malformed ids (verified against K2)", async () => {
+    const { client } = setup();
+    const subId = await client.ensureSubscription("ids", "latest");
+    expect(subId).toMatch(/^[0-9a-f]{32}$/);
+    expect((await caught(client.getSubscription("nope"))).code).toBe(10204);
+    expect((await caught(client.getSubscription(subId.toUpperCase()))).code).toBe(10204);
+    expect((await caught(client.getSubscription("0".repeat(32)))).code).toBe(10215);
+    expect((await caught(client.deleteSubscription("nope"))).code).toBe(10204);
+    expect((await caught(client.consume("nope", "w", 1))).code).toBe(10215);
+    expect((await caught(client.ack(subId, "nope", "w"))).code).toBe(10204);
+    expect((await caught(client.extend(subId, "nope", "w"))).code).toBe(10204);
+    expect((await caught(client.extend(subId, "0".repeat(32), "w"))).code).toBe(10218);
+  });
+
   it("supports ack, nack and extend", async () => {
     const { client, fake } = setup();
     fake.append({ n: 1 });
@@ -123,7 +137,7 @@ describe("K2Client", () => {
     if (!again) throw new Error("expected redelivery");
     await client.ack(subId, again.id, "w2");
     await client.ack(subId, again.id, "w2"); // idempotent
-    await client.ack(subId, "unknown-batch", "w2");
+    await client.ack(subId, "0".repeat(32), "w2"); // well-formed but unknown: success
     expect(await client.consume(subId, "w1", 10)).toBeNull();
   });
 

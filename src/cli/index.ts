@@ -5,13 +5,15 @@ import { main } from "./main.js";
 const stopHandlers = new Set<(signal: string) => void>();
 let stopRequests = 0;
 let stdoutClosed = false;
+let cleanupNote: string | undefined;
 
 function requestStop(signal: string): void {
   stopRequests++;
-  if (stopHandlers.size === 0) process.exit(signal === "EPIPE" ? 0 : 130);
-  if (stopRequests > 1 && signal !== "EPIPE") {
-    process.stderr.write("forced exit\n");
-    process.exit(130);
+  const forced = stopHandlers.size === 0 || (stopRequests > 1 && signal !== "EPIPE");
+  if (forced) {
+    if (stopHandlers.size > 0) process.stderr.write("forced exit\n");
+    if (cleanupNote) process.stderr.write(`warning: ${cleanupNote}\n`);
+    process.exit(signal === "EPIPE" ? 0 : 130);
   }
   if (signal !== "EPIPE") {
     process.stderr.write(`\n${signal} received; cleaning up (press again to force)\n`);
@@ -31,16 +33,25 @@ process.stdout.on("error", (err: NodeJS.ErrnoException) => {
 const io: CliIo = {
   env: process.env,
   stdout: (text) => {
-    if (!stdoutClosed) process.stdout.write(text);
+    if (stdoutClosed || process.stdout.write(text)) return;
+    // The pipe is full (a slow reader): wait until it drains, so output can't pile up in memory.
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        process.stdout.off("drain", done);
+        process.stdout.off("close", done);
+        process.stdout.off("error", done);
+        resolve();
+      };
+      process.stdout.on("drain", done);
+      process.stdout.on("close", done);
+      process.stdout.on("error", done);
+    });
   },
   stderr: (text) => {
     process.stderr.write(text);
   },
-  async readStdin() {
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of process.stdin) chunks.push(chunk as Uint8Array);
-    return new Uint8Array(Buffer.concat(chunks));
-  },
+  stdin: () => process.stdin as AsyncIterable<Uint8Array>,
+  stdinIsTTY: process.stdin.isTTY === true,
   async confirm(question) {
     if (!process.stdin.isTTY || !process.stderr.isTTY) return null;
     const rl = createInterface({ input: process.stdin, output: process.stderr });
@@ -49,6 +60,9 @@ const io: CliIo = {
     } finally {
       rl.close();
     }
+  },
+  setCleanupNote(note) {
+    cleanupNote = note;
   },
   onSignal(handler) {
     stopHandlers.add(handler);

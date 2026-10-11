@@ -25,26 +25,43 @@ export function matchesFilter(record: K2Record, filter: RecordFilter): boolean {
   return filter.grep === undefined || record.text().includes(filter.grep);
 }
 
-/** One output line for a record (no trailing newline). */
+// Characters a terminal may act on: C0 controls (except tab), DEL, C1 controls, and the Unicode
+// bidirectional overrides/isolates used to visually disguise text ("Trojan Source").
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+const UNSAFE = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const NAMED: { [ch: string]: string } = { "\n": "\\n", "\r": "\\r" };
+
+/** Makes untrusted text safe to print to a terminal on one line: control characters become visible escapes. */
+export function escapeForTerminal(text: string): string {
+  return text.replace(
+    UNSAFE,
+    (ch) => NAMED[ch] ?? `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/** One output line for a record (no trailing newline). Record data is escaped for the terminal. */
 export function formatRecord(
   record: K2Record,
   opts: { json?: boolean; headers?: boolean },
 ): string {
   const text = utf8DecodeStrict(record.bytes);
   if (opts.json) {
+    // JSON.stringify escapes C0 controls; also escape C1 and bidi characters (still valid JSON).
     return JSON.stringify({
       timestamp_ms: record.timestampMs,
       headers: record.headers,
       content: text ?? toBase64(record.bytes),
       encoding: text === null ? "base64" : "utf8",
-    });
+    }).replace(UNSAFE, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`);
   }
   const parts = [new Date(record.timestampMs).toISOString()];
   if (opts.headers) {
-    const pairs = Object.entries(record.headers).map(([k, v]) => `${k}=${v}`);
+    const pairs = Object.entries(record.headers).map(
+      ([k, v]) => `${escapeForTerminal(k)}=${escapeForTerminal(v)}`,
+    );
     parts.push(pairs.length > 0 ? pairs.join(" ") : "-");
   }
-  parts.push(text ?? `base64:${toBase64(record.bytes)}`);
+  parts.push(text === null ? `base64:${toBase64(record.bytes)}` : escapeForTerminal(text));
   return parts.join("  ");
 }
 
@@ -57,13 +74,45 @@ const UNIT_MS: { [unit: string]: number } = {
   d: 86_400_000,
 };
 
-/** Parses `30m`, `2h`, `7d` (relative to `now`) or an ISO date into epoch ms. */
+const BARE_NUMBER = /^\d+(?:\.\d+)?$/;
+// Only ISO forms are accepted: Date.parse guesses at anything else, usually as local time (and
+// reads "10" as a date in 2001). Date-times are rebuilt in the one format ECMAScript requires
+// every engine to parse, so Node, Bun and Deno agree.
+const ISO_DATE = /^\d{4}-\d{2}(?:-\d{2})?$/;
+const ISO_DATETIME =
+  /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * Parses `30m`, `2h`, `7d` (relative to `now`) or an ISO date into epoch ms. Date-times need a
+ * timezone (`Z` or `+05:30`); a date alone (`2026-10-11`) means midnight UTC.
+ */
 export function parseTime(value: string, now: number, flag: string): number {
-  const match = DURATION.exec(value.trim());
-  if (match) return now - Number(match[1]) * (UNIT_MS[match[2] as string] as number);
-  const ms = Date.parse(value);
+  const text = value.trim();
+  const duration = DURATION.exec(text);
+  if (duration) return now - Number(duration[1]) * (UNIT_MS[duration[2] as string] as number);
+  if (BARE_NUMBER.test(text)) {
+    // A unit was probably left off ("10" meaning 10m); a lone year is too easily the same mistake.
+    throw new UsageError(
+      `${flag} needs a unit, e.g. ${text}m (minutes), ${text}h or ${text}d; for a date use YYYY-MM-DD`,
+    );
+  }
+  let ms = Number.NaN;
+  const dt = ISO_DATETIME.exec(text);
+  if (dt) {
+    const [, date, hours, minutes, seconds = "00", fraction = "", zone] = dt;
+    if (zone === undefined) {
+      throw new UsageError(`${flag} needs a timezone, e.g. ${text}Z (UTC) or ${text}+05:30`);
+    }
+    const millis = fraction.slice(0, 3).padEnd(3, "0");
+    const offset = zone.toUpperCase() === "Z" ? "Z" : `${zone.slice(0, 3)}:${zone.slice(-2)}`;
+    ms = Date.parse(`${date}T${hours}:${minutes}:${seconds}.${millis}${offset}`);
+  } else if (ISO_DATE.test(text)) {
+    ms = Date.parse(text);
+  }
   if (Number.isNaN(ms)) {
-    throw new UsageError(`${flag} must be a duration like 30m, 2h, 7d or an ISO date`);
+    throw new UsageError(
+      `${flag} must be a duration like 30m, 2h, 7d or an ISO date like 2026-10-11 or 2026-10-11T10:00Z`,
+    );
   }
   return ms;
 }

@@ -1,7 +1,9 @@
 export type { BackoffRange } from "./backoff.js";
 export {
+  estimateRecordBytes,
   K2Client,
   type K2ClientOptions,
+  K2TimeoutError,
   MAX_PRODUCE_REQUEST_BYTES,
   MAX_RECORD_BYTES,
   type ProduceBatchedOptions,

@@ -40,8 +40,15 @@ export interface K2Record {
   /** `JSON.parse(text())`. */
   json<T = unknown>(): T;
   /**
-   * Stable dedupe key: the `k2kit-id` header when present, otherwise a FNV-1a 64-bit hash of
-   * `timestamp_ms` and the content bytes.
+   * The producer-set `k2kit-id` header, or `undefined` when absent or blank. Only records with an
+   * id are deduplicated: K2 gives every record in a produce batch the same timestamp, so records
+   * without an id can't be told apart from a redelivery by their content.
+   */
+  readonly id: string | undefined;
+  /**
+   * Stable key: the `k2kit-id` header when present (hashed if longer than 128 characters),
+   * otherwise a FNV-1a 64-bit hash of `timestamp_ms` and the content bytes. Identical records
+   * produced in the same batch share a hash key.
    */
   key(): string;
 }
@@ -76,21 +83,24 @@ export type Handler = (batch: Batch, ctx: HandlerContext) => unknown | Promise<u
  * Implement `hasMany`/`addMany` for remote stores so a batch costs one round trip, not one per record.
  */
 export interface DedupeStore {
-  /** Whether `key` was already processed. */
-  has(key: string): Promise<boolean>;
-  /** Marks `key` as processed. */
-  add(key: string): Promise<void>;
+  /** Whether `key` was already processed. May be synchronous. */
+  has(key: string): boolean | Promise<boolean>;
+  /** Marks `key` as processed. May be synchronous. */
+  add(key: string): void | Promise<void>;
   /** Batch form of `has`: one boolean per key, in order. Used instead of `has` when present. */
-  hasMany?(keys: string[]): Promise<boolean[]>;
+  hasMany?(keys: string[]): boolean[] | Promise<boolean[]>;
   /** Batch form of `add`. Used instead of `add` when present. */
-  addMany?(keys: string[]): Promise<void>;
+  addMany?(keys: string[]): void | Promise<void>;
 }
 
 /** A record to produce. */
 export interface ProduceRecord {
-  /** Bytes as is, strings as UTF-8, any other value JSON-stringified. */
+  /**
+   * Bytes as is, strings as UTF-8, other binary data (`ArrayBuffer`, `DataView`, typed arrays) as
+   * its bytes, any other value JSON-stringified. Values with no JSON form throw `TypeError`.
+   */
   content: Uint8Array | string | object;
-  /** Up to 32 string headers. */
+  /** Up to 32 string headers. Headers whose value is `undefined` are left out. */
   headers?: { [name: string]: string };
 }
 

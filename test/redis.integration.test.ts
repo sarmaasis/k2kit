@@ -29,7 +29,7 @@ describe.skipIf(!redisUrl)("RedisDedupeStore against real Redis", () => {
   });
 
   afterAll(async () => {
-    const keys = await ioredis.keys(`k2kit:dedupe:${run}*`);
+    const keys = await ioredis.keys(`k2kit:dedupe:{${run}*`);
     if (keys.length > 0) await ioredis.del(keys);
     ioredis.disconnect();
     await nodeRedis.quit();
@@ -50,10 +50,31 @@ describe.skipIf(!redisUrl)("RedisDedupeStore against real Redis", () => {
     await store.addMany(["a", "b"]);
     expect(await store.hasMany(["a", "b", "c"])).toEqual([true, true, false]);
     expect(await store.has("b")).toBe(true);
-    const ttl = await ioredis.ttl(`k2kit:dedupe:${run}-${name}:a`);
+    const ttl = await ioredis.ttl(`k2kit:dedupe:{${run}-${name}}:a`);
     expect(ttl).toBeGreaterThan(100);
     expect(ttl).toBeLessThanOrEqual(120);
   });
+
+  it.each(adapters)(
+    "%s: the adapter throws when a write fails, instead of failing silently",
+    async (_name, adapter) => {
+      // A negative TTL makes Redis reject the SET.
+      await expect(adapter().setWithTtl([`k2kit:dedupe:{${run}-err}:k`], -5)).rejects.toThrow();
+    },
+  );
+
+  it.skipIf(!upstashUrl || !upstashToken)(
+    "Upstash (REST): the adapter throws when a write fails",
+    async () => {
+      const upstash = new UpstashRedis({
+        url: upstashUrl as string,
+        token: upstashToken as string,
+      });
+      await expect(
+        fromUpstash(upstash).setWithTtl([`k2kit:dedupe:{${run}-err}:u`], -5),
+      ).rejects.toThrow();
+    },
+  );
 
   it("keeps namespaces apart across adapters sharing one Redis", async () => {
     const a = new RedisDedupeStore({ client: fromIORedis(ioredis), namespace: `${run}-ns-a` });
@@ -74,12 +95,12 @@ describe.skipIf(!redisUrl)("RedisDedupeStore against real Redis", () => {
     expect(await store.hasMany(["x", "y"])).toEqual([false, false]);
     await store.addMany(["x", "y"]);
     expect(await store.hasMany(["x", "y", "z"])).toEqual([true, true, false]);
-    expect(await ioredis.ttl(`k2kit:dedupe:${run}-upstash:x`)).toBeGreaterThan(100);
+    expect(await ioredis.ttl(`k2kit:dedupe:{${run}-upstash}:x`)).toBeGreaterThan(100);
   });
 
   it("two pods sharing Redis: pod B skips a record pod A processed but failed to ack", async () => {
     const fake = new FakeK2();
-    fake.append({ order: 1001 });
+    fake.appendWithId({ order: 1001 });
     const subId = fake.addSubscription("orders");
     const shared = () =>
       new RedisDedupeStore({ client: fromIORedis(ioredis), namespace: `${run}-pods` });

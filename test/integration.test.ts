@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { K2Client } from "../src/client.js";
 import { Consumer } from "../src/consumer.js";
-import { DEAD_LETTER_HEADERS, deadLetterToStream } from "../src/dead-letter.js";
+import {
+  DEAD_LETTER_HEADERS,
+  type DeadLetterSend,
+  deadLetterToStream,
+} from "../src/dead-letter.js";
 import type { Logger } from "../src/types.js";
 
 const streamId = process.env.K2_STREAM_ID;
@@ -43,7 +47,44 @@ function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   });
 }
 
+/**
+ * Dead letters must go to a different stream than the one consumed. With K2_DLQ_STREAM_ID set,
+ * this uses deadLetterToStream() on that stream; otherwise it writes the same headers back to
+ * the test stream with a custom sender, which the consumer allows (only the helper is guarded).
+ */
+function deadLetterSend(client: K2Client): DeadLetterSend {
+  const dlqStream = process.env.K2_DLQ_STREAM_ID;
+  if (dlqStream)
+    return deadLetterToStream(new K2Client({ streamId: dlqStream, token: token as string }));
+  return async (letters, ctx) => {
+    await client.produceBatched(
+      letters.map((l) => ({
+        content: l.record.bytes,
+        headers: {
+          ...l.record.headers,
+          [DEAD_LETTER_HEADERS.error]: String(l.error),
+          [DEAD_LETTER_HEADERS.attempts]: String(l.attempt),
+        },
+      })),
+      { signal: ctx.signal },
+    );
+  };
+}
+
 describe.skipIf(!enabled)("integration (real K2)", () => {
+  it("refuses deadLetterToStream() on the stream being consumed", () => {
+    const client = new K2Client({ streamId: streamId as string, token: token as string });
+    expect(
+      () =>
+        new Consumer({
+          streamId: streamId as string,
+          token: token as string,
+          subscription: { name: "never-created", startAt: "latest" },
+          deadLetter: { send: deadLetterToStream(client) },
+        }),
+    ).toThrow(/separate dead-letter stream/);
+  });
+
   it("consumes 50 produced records with concurrency 2", { timeout: 180_000 }, async () => {
     await withSubscription("basic", async (client, subId) => {
       const runId = crypto.randomUUID();
@@ -145,7 +186,7 @@ describe.skipIf(!enabled)("integration (real K2)", () => {
           logger: quiet,
           onError: () => {},
           retryBackoff: { minMs: 100, maxMs: 500 },
-          deadLetter: { afterAttempts: 2, send: deadLetterToStream(client) },
+          deadLetter: { afterAttempts: 2, send: deadLetterSend(client) },
         }).on("deadLetter", (e) => {
           deadLettered += e.deadLettered;
         });
@@ -166,6 +207,7 @@ describe.skipIf(!enabled)("integration (real K2)", () => {
         }
         expect(new Set(handled)).toEqual(new Set([0, 2]));
 
+        if (process.env.K2_DLQ_STREAM_ID) return; // the letter went to the separate DLQ stream
         let letter = null;
         for (let i = 0; i < 40 && !letter; i++) {
           const batch = await client.consume(observer, uniqueName("obs"), 100);

@@ -78,8 +78,8 @@ describe("RedisDedupeStore", () => {
     expect(await store.hasMany(["a", "b", "c"])).toEqual([true, true, false]);
     expect(await store.has("a")).toBe(true);
     expect(calls).toEqual(["mget 2", "set 2", "mget 3", "mget 1"]);
-    expect([...data.keys()]).toEqual(["k2kit:dedupe:orders:a", "k2kit:dedupe:orders:b"]);
-    expect(data.get("k2kit:dedupe:orders:a")?.ttl).toBe(7 * 24 * 3600);
+    expect([...data.keys()]).toEqual(["k2kit:dedupe:{orders}:a", "k2kit:dedupe:{orders}:b"]);
+    expect(data.get("k2kit:dedupe:{orders}:a")?.ttl).toBe(7 * 24 * 3600);
   });
 
   it("keeps namespaces apart and skips empty batches", async () => {
