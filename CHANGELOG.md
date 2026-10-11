@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- README: a "Dedupe guarantees" section spelling out when keys are written (after the handler succeeds, before the ack), what each failure mode does, and that handlers should still be idempotent; plus how to set `k2kit-id` when producing without k2kit.
+
 ## 0.1.1 — 2026-10-11
 
 - Published from GitHub Actions through npm trusted publishing, with a provenance attestation. No code changes.

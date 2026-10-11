@@ -5,6 +5,7 @@ import type { DeadLetter, DeadLetterOptions } from "../src/dead-letter.js";
 import { MemoryDedupeStore } from "../src/dedupe.js";
 import { K2Error } from "../src/errors.js";
 import type { ConsumerOptions } from "../src/options.js";
+import { decodeRecord } from "../src/record.js";
 import type { Batch, HandlerContext, Logger } from "../src/types.js";
 import { FakeK2, LEASE_MS } from "./fake-k2.js";
 
@@ -686,5 +687,96 @@ describe("Consumer", () => {
     expect(store.addMany).toHaveBeenCalledWith([expect.any(String), expect.any(String)]);
     expect(store.has).not.toHaveBeenCalled();
     expect(store.add).not.toHaveBeenCalled();
+  });
+
+  describe("dedupe ordering (documented in the README)", () => {
+    function trackingStore() {
+      const events: string[] = [];
+      const seen = new Set<string>();
+      const store = {
+        has: async (k: string) => seen.has(k),
+        add: async (k: string) => void seen.add(k),
+        hasMany: async (keys: string[]) => {
+          events.push("check");
+          return keys.map((k) => seen.has(k));
+        },
+        addMany: async (keys: string[]) => {
+          events.push("write");
+          for (const k of keys) seen.add(k);
+        },
+      };
+      return { store, events, seen };
+    }
+
+    it("checks before the handler and writes keys after it succeeds, before the ack", async () => {
+      const h = harness();
+      h.fake.append("a", "b");
+      const { store, events } = trackingStore();
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        if (String(input).endsWith("/ack")) events.push("ack");
+        return h.fake.fetch(input, init);
+      };
+      const c = h.consumer({ dedupe: store, fetch });
+      settle(c.run(() => void events.push("handler")));
+      await until(() => events.includes("ack"));
+      await c.stop();
+      expect(events.slice(0, 4)).toEqual(["check", "handler", "write", "ack"]);
+    });
+
+    it("writes no keys when the handler throws, so the records are processed again", async () => {
+      const h = harness();
+      h.fake.append("a");
+      const { store, events, seen } = trackingStore();
+      let calls = 0;
+      const c = h.consumer({ dedupe: store, onError: () => {} });
+      settle(
+        c.run(() => {
+          calls++;
+          if (calls === 1) {
+            expect(seen.size).toBe(0);
+            throw new Error("crash mid-handler");
+          }
+        }),
+      );
+      await until(() => count(h.fake, "ack") === 1);
+      await c.stop();
+      expect(calls).toBe(2);
+      expect(events.filter((e) => e === "write")).toHaveLength(1);
+    });
+
+    it("acks without calling the handler when every record was already seen", async () => {
+      const h = harness();
+      h.fake.append("a");
+      const { store, seen } = trackingStore();
+      const raw = h.fake.records[0];
+      if (!raw) throw new Error("no record");
+      seen.add(decodeRecord(raw).key()); // as if a previous delivery had been processed
+      let calls = 0;
+      const c = h.consumer({ dedupe: store });
+      settle(c.run(() => void calls++));
+      await until(() => count(h.fake, "ack") === 1);
+      await c.stop();
+      expect(calls).toBe(0);
+    });
+
+    it("processes without dedupe when the store is down, instead of dropping", async () => {
+      const h = harness();
+      h.fake.append("a");
+      const phases: string[] = [];
+      const store = {
+        has: async () => false,
+        add: async () => {},
+        hasMany: async (): Promise<boolean[]> => {
+          throw new Error("redis down");
+        },
+      };
+      let calls = 0;
+      const c = h.consumer({ dedupe: store, onError: (_e, ctx) => void phases.push(ctx.phase) });
+      settle(c.run(() => void calls++));
+      await until(() => count(h.fake, "ack") === 1);
+      await c.stop();
+      expect(calls).toBe(1);
+      expect(phases).toContain("dedupe");
+    });
   });
 });

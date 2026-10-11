@@ -166,8 +166,29 @@ K2 delivers **at least once** per subscription, with no deduplication and no ord
   ```
 
   Use a different `namespace` per subscription: two subscriptions each process every record, so they must not dedupe each other. Your own stores can implement `hasMany`/`addMany` to get the same one-round-trip-per-batch behaviour.
-- **Record keys.** K2 records have no id. `K2Client.produce()` adds a random `k2kit-id` header to each record (opt out with `{ idHeader: false }`), and `record.key()` uses it, so dedupe also catches producer retries. Without the header, the key is a FNV-1a 64-bit hash of `timestamp_ms` and the content. That catches K2 redeliveries but not producer retries, which get a new timestamp. Two identical records received in the same millisecond also share a key.
+- **Record keys.** K2 records have no offset or id. `K2Client.produce()`, `produceBatched()` and `k2kit produce` add a random `k2kit-id` header to each record (opt out with `{ idHeader: false }`), and `record.key()` uses it, so dedupe also catches producer retries. Without the header, the key is a FNV-1a 64-bit hash of `timestamp_ms` and the content. That catches K2 redeliveries but not producer retries, which get a new timestamp. Two identical records received in the same millisecond also share a key.
+- **Producing without k2kit** (for example from a Worker using the K2 binding)? Add a `k2kit-id` header with a random UUID (for example `crypto.randomUUID()`) to get the same producer-retry dedupe. Generate it once per record and reuse it when you retry.
 - **K2 limits.** `max_records` 1–10,000; 10 MB per consume response; 128 active leases per subscription; 100 subscriptions per stream; 5 MB per produce request; ~1 MB per record; 32 headers per record.
+
+### Dedupe guarantees
+
+Dedupe **reduces** duplicate processing; it doesn't make it exactly-once. **Your handler should still be idempotent.** For each batch, the consumer:
+
+1. Checks the dedupe store and skips records it has already seen. If every record was seen, the batch is acked without calling your handler.
+2. Calls your handler with the remaining records.
+3. **Only if the handler returns successfully**, writes the records' keys to the store, **then** acks the batch.
+
+What that means when things go wrong:
+
+| What happens | Result |
+| --- | --- |
+| The process crashes or the handler throws mid-batch | No keys are written. K2 redelivers and the records are processed again. **Nothing is dropped.** |
+| The process crashes after the handler, before the key write | The records are processed again on redelivery. |
+| The keys are written but the ack fails | The redelivered records are skipped and the batch is acked. |
+| The lease is lost while the handler runs | `ctx.signal` aborts and nothing is written or acked. If your handler doesn't stop, it can overlap with the redelivery on another worker. |
+| The dedupe store is down | The error goes to `onError` and the batch is processed without dedupe, rather than dropped or blocked. |
+
+In short, k2kit errs towards processing a record twice, never towards silently skipping one.
 
 ## Crash recovery
 
