@@ -67,7 +67,7 @@ Also verified on 2026-10-11: the built package passes `publint --strict` and `@a
 | --- | --- |
 | Does the `cf` CLI already have a K2 tail/consume command? | No (checked `cf` 1.0.0-beta.14 on 2026-10-11). `cf k2 streams` covers stream create/get/list/update/delete and `subscriptions list` (with committed-position lag). It has no tail, consume, produce, replay or subscription delete, so nothing is dropped from scope. `k2kit subs ls` overlaps `cf k2 streams subscriptions list` but uses the data-plane token; cf adds lag. |
 | Is the npm name `k2kit` free? | Yes on 2026-10-11 (`npm view k2kit` → 404). |
-| Is there an existing community K2 consumer library? | None found in a web search on 2026-10-11 (coverage partial). |
+| Is there an existing community K2 consumer library? | Rechecked 2026-10-11 (npm search, GitHub repository search, Cloudflare's official TypeScript SDK 7.3.0). **JavaScript/TypeScript: none found**, and the official SDK has no K2 resources. **.NET: [soenneker.cloudflare.k2](https://github.com/soenneker/soenneker.cloudflare.k2)** (created 2026-10-01) includes a consumer with polling, lease renewal, retry backoff and concurrency. PyPI, Go and Rust registries were not searched. |
 | Does the test account have Workers Paid? | Yes: K2 works on the test account. |
 | Does produce accept the `k2kit-id` header? | Yes: confirmed by the integration test on 2026-10-11. |
 | Is FNV-1a over `timestamp_ms` + content collision-safe enough? | Documented as a known limit (above and in the README). |
