@@ -34,7 +34,7 @@ K2_STREAM_ID=<32-char stream id>
 CLOUDFLARE_API_TOKEN=<token with K2 Consume and K2 Produce>
 ```
 
-Use a test stream: the tests produce records and create and delete their own subscriptions.
+Use a test stream: the tests produce records and create and delete their own subscriptions. Note that `.dev.vars` makes every local `pnpm test` run them; prefix the command with `K2_STREAM_ID=` to skip them. In CI they never run on pushes or PRs, only when you start the CI workflow by hand (Actions → CI → Run workflow) with **live** checked, using the `K2_STREAM_ID` and `CLOUDFLARE_API_TOKEN` repository secrets. K2 bills produced, consumed and stored data once billing starts.
 
 **Live Redis tests** (`test/redis.integration.test.ts`) run when `REDIS_URL` is set:
 

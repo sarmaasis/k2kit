@@ -22,8 +22,10 @@ const consumer = new Consumer({
   concurrency: 4,
   maxRecords: 100,
   dedupe: new MemoryDedupeStore(),
-  // Stable across restarts so leases are recovered; unique per live process.
-  workerIdPrefix: process.env.HOSTNAME ?? "orders-local",
+  // In Kubernetes, the pod name is stable across restarts (so leases are recovered) and unique
+  // per live process. Elsewhere, keep the default (host-pid-random): a fixed fallback would let
+  // two local copies share worker ids and act on each other's leases.
+  ...(process.env.HOSTNAME ? { workerIdPrefix: process.env.HOSTNAME } : {}),
 });
 
 consumer.on("ack", (e) => console.error(`acked ${e.records} records (${e.workerId})`));

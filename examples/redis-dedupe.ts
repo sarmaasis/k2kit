@@ -12,7 +12,11 @@ export function fromIORedis(redis: IORedis): RedisDedupeClient {
     async setWithTtl(keys, ttlSeconds) {
       const pipeline = redis.pipeline();
       for (const key of keys) pipeline.set(key, "1", "EX", ttlSeconds);
-      await pipeline.exec();
+      // ioredis resolves a pipeline even when commands fail, returning [error, result] pairs.
+      // Throw, so k2kit reports the failure instead of dedupe silently not recording keys.
+      const results = await pipeline.exec();
+      const failed = results?.find(([err]) => err);
+      if (failed) throw failed[0];
     },
   };
 }
@@ -42,7 +46,9 @@ export function fromUpstash(redis: UpstashRedis): RedisDedupeClient {
   };
 }
 
-// Usage: one namespace per subscription, shared by every process consuming it.
-export function ordersDedupe(redis: IORedis): RedisDedupeStore {
-  return new RedisDedupeStore({ client: fromIORedis(redis), namespace: "orders-processor" });
+// Usage: one namespace per subscription, shared by every process consuming it. Use the
+// subscription id (from `client.ensureSubscription(name, startAt)`), not its name: a subscription
+// deleted and recreated under the same name gets a new id, so old keys can't make it skip records.
+export function ordersDedupe(redis: IORedis, subscriptionId: string): RedisDedupeStore {
+  return new RedisDedupeStore({ client: fromIORedis(redis), namespace: subscriptionId });
 }
