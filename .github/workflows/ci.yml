@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual runs can also run the live K2 tests (see the live job).
+  workflow_dispatch:
+    inputs:
+      live:
+        description: "Also run the live tests against the real K2 stream (billable once K2 billing starts)"
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -36,10 +43,9 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run build
       - run: pnpm run check:package
+      # No K2 credentials: the live tests skip, so pushes and PRs never hit a real stream.
       - run: pnpm run test:coverage
         env:
-          K2_STREAM_ID: ${{ secrets.K2_STREAM_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           REDIS_URL: redis://127.0.0.1:6390
           UPSTASH_REDIS_REST_URL: http://127.0.0.1:8079
           UPSTASH_REDIS_REST_TOKEN: local-test-token
@@ -48,6 +54,25 @@ jobs:
         with:
           name: dist
           path: dist
+
+  live:
+    # Live K2 tests, only when started by hand with "live" checked.
+    if: github.event_name == 'workflow_dispatch' && inputs.live
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vitest run test/integration.test.ts
+        env:
+          K2_STREAM_ID: ${{ secrets.K2_STREAM_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          K2_DLQ_STREAM_ID: ${{ secrets.K2_DLQ_STREAM_ID }}
 
   runtimes:
     # Loads the built package (zero runtime deps) on every runtime the README claims.
