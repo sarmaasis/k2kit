@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an improvement to k2kit
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem or workflow, not just the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like k2kit to do?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?

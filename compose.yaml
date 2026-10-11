@@ -1,0 +1,18 @@
+# Local services for the Redis integration tests:
+#   docker compose up -d
+#   REDIS_URL=redis://127.0.0.1:6390 \
+#   UPSTASH_REDIS_REST_URL=http://127.0.0.1:8079 UPSTASH_REDIS_REST_TOKEN=local-test-token \
+#   pnpm test
+services:
+  redis:
+    image: redis:8-alpine
+    ports: ["127.0.0.1:6390:6379"]
+  # Upstash-compatible REST API in front of the Redis above.
+  upstash:
+    image: hiett/serverless-redis-http:latest
+    ports: ["127.0.0.1:8079:80"]
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: local-test-token
+      SRH_CONNECTION_STRING: redis://redis:6379
+    depends_on: [redis]

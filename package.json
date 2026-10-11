@@ -1,0 +1,81 @@
+{
+  "name": "k2kit",
+  "version": "0.1.0",
+  "description": "Consumer runtime and CLI for Cloudflare K2 streams: lease, process, ack \u2014 with backoff, heartbeats, dedupe and graceful shutdown.",
+  "license": "MIT",
+  "author": "sarmaasis",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sarmaasis/k2kit.git"
+  },
+  "homepage": "https://github.com/sarmaasis/k2kit#readme",
+  "bugs": {
+    "url": "https://github.com/sarmaasis/k2kit/issues"
+  },
+  "keywords": [
+    "cloudflare",
+    "k2",
+    "stream",
+    "consumer",
+    "queue",
+    "log",
+    "cli"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@12.11.2",
+  "bin": {
+    "k2kit": "dist/cli/index.js"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup && tsc -p tsconfig.build.json && node scripts/dts-cjs.mjs",
+    "lint": "biome check --error-on-warnings .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm test && pnpm run build && pnpm run check:package",
+    "check:package": "publint --strict && attw --pack .",
+    "bench": "vitest bench --run --reporter=verbose",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@biomejs/biome": "2.5.15",
+    "@types/node": "26.6.5",
+    "@upstash/redis": "1.39.0",
+    "@vitest/coverage-v8": "5.0.3",
+    "ioredis": "6.0.0",
+    "publint": "0.3.25",
+    "redis": "6.3.0",
+    "tsup": "8.5.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

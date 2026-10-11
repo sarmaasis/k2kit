@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/sarmaasis/k2kit/security/advisories/new
+    about: Please report security issues privately, not as public issues.
+  - name: Cloudflare K2 itself (not k2kit)
+    url: https://developers.cloudflare.com/k2/
+    about: Problems with K2's service or API belong with Cloudflare.

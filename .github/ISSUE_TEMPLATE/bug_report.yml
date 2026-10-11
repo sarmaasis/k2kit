@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in k2kit doesn't work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Never paste API tokens.** For security issues, use the private
+        reporting described in SECURITY.md instead of a public issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Code or CLI commands, with the consumer options you used (token removed).
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and K2 error codes
+      description: k2kit log lines and any `K2 <code>` errors.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: "k2kit 0.1.0, Node 22.12 / Bun 1.3 / Deno 2.9, macOS / Linux"
+    validations:
+      required: true

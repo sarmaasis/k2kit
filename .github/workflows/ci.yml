@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8-alpine
+        ports: ["6390:6379"]
+      upstash:
+        # Upstash-compatible REST API in front of the Redis service.
+        image: hiett/serverless-redis-http:latest
+        ports: ["8079:80"]
+        env:
+          SRH_MODE: env
+          SRH_TOKEN: local-test-token
+          SRH_CONNECTION_STRING: redis://redis:6379
+    strategy:
+      matrix:
+        # The dev toolchain (Vitest 5) needs Node 22.12+; the published package supports Node 20+.
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - run: pnpm run check:package
+      - run: pnpm run test:coverage
+        env:
+          K2_STREAM_ID: ${{ secrets.K2_STREAM_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          REDIS_URL: redis://127.0.0.1:6390
+          UPSTASH_REDIS_REST_URL: http://127.0.0.1:8079
+          UPSTASH_REDIS_REST_TOKEN: local-test-token
+      - if: matrix.node == 24
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist
+
+  runtimes:
+    # Loads the built package (zero runtime deps) on every runtime the README claims.
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runtime: [node20, bun, deno]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - if: matrix.runtime == 'node20'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - if: matrix.runtime == 'node20'
+        run: node scripts/smoke-dist.mjs && node dist/cli/index.js --version
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+      - if: matrix.runtime == 'bun'
+        run: bun scripts/smoke-dist.mjs && bun dist/cli/index.js --version
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - if: matrix.runtime == 'deno'
+        run: deno run --allow-read --allow-env scripts/smoke-dist.mjs
