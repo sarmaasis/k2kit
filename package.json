@@ -1,6 +1,6 @@
 {
   "name": "k2kit",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Consumer runtime and CLI for Cloudflare K2 streams: lease, process, ack \u2014 with backoff, heartbeats, dedupe and graceful shutdown.",
   "license": "MIT",
   "author": "sarmaasis",
