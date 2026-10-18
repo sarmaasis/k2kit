@@ -70,12 +70,12 @@
     "@biomejs/biome": "2.5.15",
     "@types/node": "26.6.5",
     "@upstash/redis": "1.39.0",
-    "@vitest/coverage-v8": "5.0.3",
+    "@vitest/coverage-v8": "5.0.5",
     "ioredis": "6.0.0",
     "publint": "0.3.25",
     "redis": "6.3.0",
-    "tsup": "8.5.1",
+    "tsup": "9.0.0",
     "typescript": "7.0.2",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   }
 }
